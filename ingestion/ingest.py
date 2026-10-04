@@ -13,30 +13,19 @@ import praw
 import prawcore
 from dotenv import load_dotenv
 
+from common.keywords import KEYWORDS, KEYWORD_PATTERNS, match_keywords  # noqa: F401
+
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw_data"
 STATE_FILE = ROOT / "ingestion" / "seen_ids.json"
 
 SUBREDDITS = ["india", "news", "worldnews", "weather", "NaturalDisasters"]
 
-# keyword reported in the record -> regex variants that count as a match
-KEYWORDS = {
-    "flood": r"flood(?:s|ed|ing|waters?)?",
-    "earthquake": r"earthquakes?|quakes?|tremors?|aftershocks?",
-    "wildfire": r"wild\s?fires?|forest\s?fires?|bush\s?fires?",
-}
-KEYWORD_PATTERNS = {k: re.compile(rf"\b(?:{v})\b", re.IGNORECASE) for k, v in KEYWORDS.items()}
-
 MAX_SEEN = 50_000
 FETCH_LIMIT = 100
 
 log = logging.getLogger("ingest")
 _stop = False
-
-
-def match_keywords(text):
-    """Return the list of disaster keywords found in text."""
-    return [k for k, p in KEYWORD_PATTERNS.items() if p.search(text or "")]
 
 
 def load_seen(path=STATE_FILE):

@@ -10,19 +10,12 @@ import random
 import time
 import uuid
 
-from ingestion.ingest import RAW_DIR, match_keywords, write_batch
+from common.config import RAW_DIR
+from common.keywords import match_keywords
+from common.regions import REGIONS as _REGIONS
+from ingestion.ingest import write_batch
 
-REGIONS = {
-    "Assam": ["Guwahati", "Dibrugarh", "Brahmaputra valley"],
-    "Kerala": ["Kochi", "Wayanad", "Thiruvananthapuram"],
-    "Maharashtra": ["Mumbai", "Pune", "Nagpur"],
-    "Tamil Nadu": ["Chennai", "Madurai", "Coimbatore"],
-    "Delhi": ["Delhi", "New Delhi", "Noida"],
-    "Uttarakhand": ["Dehradun", "Chamoli", "Kedarnath"],
-    "California": ["Los Angeles", "San Diego", "Sonoma"],
-    "Japan": ["Tokyo", "Osaka", "Fukushima"],
-    "Nepal": ["Kathmandu", "Pokhara", "Gorkha"],
-}
+REGIONS = {name: places for name, (_la, _lo, places) in _REGIONS.items()}
 
 TEMPLATES = {
     "flood": [

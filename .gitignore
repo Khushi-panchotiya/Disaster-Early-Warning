@@ -10,3 +10,4 @@ spark-warehouse/
 .idea/
 .vscode/
 ingestion/seen_ids.json
+logs/
