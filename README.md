@@ -60,32 +60,84 @@ flowchart TD
 
 Only a short snippet (not the full post) and a link back to the source are stored — enough to show real evidence on the dashboard without hoarding full post bodies.
 
-## Platforms
+## Quick Start
 
-- Local machine / Google Colab for development
-- Local Spark installation (no Hadoop/HDFS setup needed)
-- MongoDB Community Server (local)
-- GitHub for version control
-- Reddit API — free tier
+Requirements: macOS/Linux, Python 3.11, Java 11+, MongoDB Community running locally.
 
-No paid cloud services or paid software anywhere in this stack.
+```bash
+make setup                          # venv + dependencies
+brew services start mongodb-community
+make test                           # 38 tests, incl. an end-to-end Spark -> MongoDB run
+make run                            # Spark job + detector + dashboard -> http://localhost:8501
+```
 
-## Development Phases
+### Demo (no Reddit credentials needed)
 
-1. **Environment Setup** — PRAW authenticated and pulling posts into a local `raw_data/` folder; MongoDB running with the compound index created
-2. **Streaming Pipeline** — Spark Structured Streaming job watching that folder and processing new posts as they arrive
-3. **Enrichment** — sentiment scoring + region tagging
-4. **Storage Layer** — writing enriched records into MongoDB
-5. **Anomaly Detection** — rolling-average spike detector querying MongoDB directly
-6. **Dashboard** — Streamlit UI tying it all together
+Natural disasters are hard to schedule, so a simulator writes records in exactly the same format as the live Reddit ingester.
+With `make run` going in one terminal, use another:
 
-## Expected Outcome
+```bash
+make baseline                       # 60 min of quiet background chatter across regions
+make spike REGION=Assam KW=flood N=40   # a burst -> alert on the dashboard within seconds
+make spike REGION=Kerala KW=earthquake
+make reset                          # wipe everything for a clean run
+```
 
-A live demo: post a burst of test messages with a disaster keyword, and watch an alert appear on the dashboard within seconds — backed by a genuine streaming pipeline with a deliberately simplified, single-database architecture.
+Single hand-written posts: `python -m ingestion.simulate one --region Nepal --keyword earthquake --text "Big quake in Kathmandu"`.
+Alerts can also be tested by inserting documents straight into MongoDB with `mongosh`; nothing is ever posted to Reddit.
+
+### Live Reddit mode
+
+Create a "script" app at reddit.com/prefs/apps (Reddit now requires registering for API access first), copy `.env.example` to `.env`, fill in the credentials, then:
+
+```bash
+USE_REDDIT=1 make run               # or: make ingest
+```
+
+## Project Layout
+
+```
+common/      config, MongoDB helper + indexes, keyword matching, region dictionary (names + coordinates)
+ingestion/   ingest.py (PRAW poller)   simulate.py (fake-data injector)
+streaming/   stream_job.py (Spark Structured Streaming)   enrich.py (region + VADER + snippet)
+detector/    detector.py (sliding-window spike detector)
+dashboard/   app.py (Streamlit)   data.py (queries)
+scripts/     run_all.sh   demo.sh        tests/  unit + end-to-end tests
+```
+
+## How Each Stage Works
+
+- **Ingestion** polls r/india, r/news, r/worldnews, r/weather, r/NaturalDisasters every 60 s, matches disaster keywords with word boundaries (so "floodlights" is ignored), skips IDs it has already seen, and writes one JSON-lines batch per poll. Files are written to a hidden temp name and renamed, so Spark never reads half a file. Rate limits and API errors trigger backoff instead of a crash.
+- **Spark job** watches `raw_data/` in 5 s micro-batches (`local[*]`), tags a region from a dictionary of region and place names, scores VADER sentiment, trims the text to a 200-character snippet, and upserts into MongoDB by Reddit ID inside `foreachBatch`. Together with Spark's checkpoint, restarts and replays never create duplicates. Malformed lines are dropped.
+- **Detector** counts mentions per region in a sliding window (default 5 min) and compares with the previous 12 windows. It alerts when `count >= max(mean + 3 * max(std, 1), 5)`. The std floor and minimum count stop quiet regions from firing on two or three posts. Windows slide rather than align to the clock, so a burst is never split across a bucket boundary. An ongoing incident updates one alert (peak count, z-score, severity `warning`/`critical`) instead of creating duplicates.
+- **Dashboard** auto-refreshes: KPIs, alert feed, per-region mention timeline, map (alerting regions in red), and the latest matching posts with links back to the source.
+
+## Tuning
+
+`python -m detector.detector --window-minutes 5 --baseline-windows 12 --k 3 --min-count 5` (lower `--k` for more sensitivity). Look-back, bucket size, region and disaster-type filters live in the dashboard sidebar.
+
+## Scaling Story
+
+The system filters at the source (specific subreddits and keywords) so volume stays small, then scales by adding compute: Spark moves from `local[*]` to a cluster by changing one config line (`.master(...)`), and MongoDB scales out through sharding on `region` (the leading field of the compound index). The detector's work is a single indexed aggregation, so it also stays fast as data grows.
+
+## Design Decisions
+
+- **MongoDB only (no HBase).** A compound index on `{region: 1, timestamp: -1}` serves the "mentions in the last N minutes" queries at this scale, without a second database.
+- **No HDFS.** The raw backup is a local `raw_data/` folder, which is also Spark's streaming source.
+- **Reddit over Twitter/X**, whose free tier no longer allows reading posts.
+- **Store only an enriched record** (region, timestamp, sentiment, keyword, 200-character snippet, permalink), not full post bodies.
+
+## Known Limitations
+
+- Region tagging is keyword-based, so posts that name no place are tagged `Unknown` and excluded from alerts, and ambiguous place names can be mis-tagged.
+- VADER is a general-purpose sentiment model: it reads words like "help" as positive, so sentiment is shown as supporting context and is not used for alerting.
+- Reddit skews towards certain countries and languages (English), and Reddit chatter is not verified information, so an alert means "unusual chatter", not "confirmed disaster".
+- Live Reddit mode is unit-tested against a mocked client but has not been run against the real API yet.
 
 ## What This Project Demonstrates
 
-- Real-time stream processing with Spark
-- MongoDB schema and compound-index design for fast time-windowed queries
-- Architectural judgment — evaluating a two-database design and simplifying to one after confirming it meets the performance requirement
-- End-to-end pipeline thinking: ingestion → processing → storage → detection → visualization
+- Real-time stream processing with Spark Structured Streaming (file source, micro-batches, checkpointing, idempotent sinks)
+- MongoDB schema and compound-index design for fast time-windowed queries, verified with `explain()`
+- Architectural judgment: evaluating a two-database design and simplifying to one after confirming it meets the performance requirement
+- A statistically grounded anomaly detector with tested edge cases (quiet regions, noisy baselines, ongoing incidents)
+- End-to-end pipeline thinking: ingestion, processing, storage, detection and visualisation, with automated tests

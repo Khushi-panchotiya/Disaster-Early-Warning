@@ -85,8 +85,12 @@ def live():
         if rs.empty:
             st.info("No regional data yet.")
         else:
-            rs["size"] = 20_000 + 60_000 * rs.mentions / rs.mentions.max()
-            st.map(rs, latitude="latitude", longitude="longitude", size="size", zoom=1)
+            alerting = {a["region"] for a in alerts if (datetime.now(timezone.utc) - a["updated_at"].replace(
+                tzinfo=timezone.utc)).total_seconds() < 900}
+            rs["size"] = 150_000 + 400_000 * rs.mentions / rs.mentions.max()
+            rs["color"] = rs.region.map(lambda r: "#e5383b" if r in alerting else "#4c78a8aa")
+            st.map(rs, latitude="latitude", longitude="longitude", size="size", color="color")
+            st.caption("🔴 region with an active alert · 🔵 other regions · size = mentions")
             st.dataframe(rs[["region", "mentions", "avg_sentiment"]].round(2), hide_index=True, height=200)
 
     st.subheader("Evidence: latest matching posts")

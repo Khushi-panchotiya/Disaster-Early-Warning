@@ -119,11 +119,16 @@ def main():
     db = ensure_indexes(get_db(a.db))
     log.info("detector: %dm windows, baseline %d windows, k=%.1f, min_count=%d",
              a.window_minutes, a.baseline_windows, a.k, a.min_count)
+    announced = set()
     while True:
         try:
             for al in detect(db, None, a.window_minutes, a.baseline_windows, a.k, a.min_count):
-                log.warning("ALERT %s [%s] %s: %d mentions (baseline %.2f, z=%.1f)", al["severity"].upper(),
-                            al["top_keyword"], al["region"], al["count"], al["baseline_mean"], al["z_score"])
+                level = logging.WARNING if al["region"] not in announced else logging.DEBUG  # log new incidents once
+                announced.add(al["region"])
+                log.log(level, "ALERT %s [%s] %s: %d mentions (baseline %.2f, z=%.1f)", al["severity"].upper(),
+                        al["top_keyword"], al["region"], al["count"], al["baseline_mean"], al["z_score"])
+            announced.intersection_update(r["region"] for r in db.alerts.find(
+                {"updated_at": {"$gte": datetime.now(timezone.utc) - timedelta(minutes=a.window_minutes)}}))
         except Exception:  # keep the detector alive through transient Mongo errors
             log.exception("evaluation failed")
         if a.once:
