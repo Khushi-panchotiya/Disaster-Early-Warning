@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+raw_data/*
+!raw_data/.gitkeep
+checkpoints/
+spark-warehouse/
+.DS_Store
+.idea/
+.vscode/
