@@ -9,3 +9,4 @@ spark-warehouse/
 .DS_Store
 .idea/
 .vscode/
+ingestion/seen_ids.json
