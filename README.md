@@ -77,7 +77,7 @@ Only a short snippet (not the full post) and a link back to the source are store
 - [x] MongoDB schema and compound indexes
 - [x] Sliding-window spike detector with alert lifecycle
 - [x] Streamlit dashboard (alert feed, timeline, map, evidence snippets)
-- [x] 38 automated tests, including an end-to-end Spark -> MongoDB -> detector test
+- [x] 41 automated tests, including an end-to-end Spark -> MongoDB -> detector test
 
 **Pending (future work, not part of this submission)**
 - [ ] Live run against Reddit (waiting for Reddit API access approval; code is ready, run `USE_REDDIT=1 make run` once `.env` is filled in)
@@ -92,7 +92,7 @@ Requirements: macOS/Linux, Python 3.11, Java 11+, MongoDB Community running loca
 ```bash
 make setup                          # venv + dependencies
 brew services start mongodb-community
-make test                           # 38 tests, incl. an end-to-end Spark -> MongoDB run
+make test                           # 41 tests, incl. an end-to-end Spark -> MongoDB run
 make run                            # Spark job + detector + dashboard -> http://localhost:8501
 ```
 
@@ -135,7 +135,7 @@ scripts/     run_all.sh   demo.sh        tests/  unit + end-to-end tests
 - **Ingestion** polls r/india, r/news, r/worldnews, r/weather, r/NaturalDisasters every 60 s, matches disaster keywords with word boundaries (so "floodlights" is ignored), skips IDs it has already seen, and writes one JSON-lines batch per poll. Files are written to a hidden temp name and renamed, so Spark never reads half a file. Rate limits and API errors trigger backoff instead of a crash.
 - **Spark job** watches `raw_data/` in 5 s micro-batches (`local[*]`), tags a region from a dictionary of region and place names, scores VADER sentiment, trims the text to a 200-character snippet, and upserts into MongoDB by Reddit ID inside `foreachBatch`. Together with Spark's checkpoint, restarts and replays never create duplicates. Malformed lines are dropped.
 - **Detector** counts mentions per region in a sliding window (default 5 min) and compares with the previous 12 windows. It alerts when `count >= max(mean + 3 * max(std, 1), 5)`. The std floor and minimum count stop quiet regions from firing on two or three posts. Windows slide rather than align to the clock, so a burst is never split across a bucket boundary. An ongoing incident updates one alert (peak count, z-score, severity `warning`/`critical`) instead of creating duplicates.
-- **Dashboard** auto-refreshes: KPIs, alert feed, per-region mention timeline, map (alerting regions in red), and the latest matching posts with links back to the source.
+- **Dashboard** auto-refreshes and has three tabs: **Live monitor** (KPIs, alert feed, per-region timeline, map with alerting regions in red, latest posts with source links), **MongoDB storage** (collections with sizes, indexes, a document browser with the equivalent `find()` shown, raw JSON, and the query plan proving the compound index is used) and **Spark pipeline** (Spark version/master, micro-batch count, rows processed, throughput, per-batch charts, and a link to Spark's own web UI at http://localhost:4040 while the job runs).
 
 ## Tuning
 

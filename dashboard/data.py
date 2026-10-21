@@ -79,3 +79,64 @@ def region_summary(db, hours, regions=None, keywords=None):
 def recent_posts(db, limit=15, region=None, hours=24, keywords=None):
     q = _filter(_since(hours), [region] if region else None, keywords)
     return list(db.posts.find(q).sort("timestamp", -1).limit(limit))
+
+
+# ---- MongoDB storage explorer -------------------------------------------------------------------
+
+def collection_overview(db):
+    """One row per collection: documents, data size, storage size and index size."""
+    rows = []
+    for name in sorted(db.list_collection_names()):
+        st = db.command("collstats", name)
+        rows.append({"collection": name, "documents": st["count"], "avg doc (bytes)": st.get("avgObjSize", 0),
+                     "data (KB)": round(st["size"] / 1024, 1), "storage (KB)": round(st["storageSize"] / 1024, 1),
+                     "indexes": st["nindexes"], "index size (KB)": round(st["totalIndexSize"] / 1024, 1)})
+    return pd.DataFrame(rows)
+
+
+def index_table(db, collection="posts"):
+    sizes = db.command("collstats", collection).get("indexSizes", {})
+    rows = [{"name": i["name"], "keys": ", ".join(f"{k} ({'asc' if v == 1 else 'desc'})" for k, v in i["key"].items()),
+             "size (KB)": round(sizes.get(i["name"], 0) / 1024, 1)} for i in db.get_collection(collection).list_indexes()]
+    return pd.DataFrame(rows)
+
+
+def browse_posts(db, region=None, keyword=None, limit=50):
+    q = {}
+    if region:
+        q["region"] = region
+    if keyword:
+        q["keyword_matched"] = keyword
+    docs = list(db.posts.find(q).sort("timestamp", -1).limit(limit))
+    return q, docs
+
+
+def explain_query(db, query):
+    """Summarise the winning plan for the posts query: which index (if any) served it."""
+    ex = db.command({"explain": {"find": "posts", "filter": query, "sort": {"timestamp": -1}, "limit": 50},
+                     "verbosity": "executionStats"})
+    plan = ex["queryPlanner"]["winningPlan"]
+    stages, index = [], None
+    while plan:
+        stages.append(plan["stage"])
+        index = plan.get("indexName", index)
+        plan = plan.get("inputStage")
+    es = ex["executionStats"]
+    return {"stages": " → ".join(reversed(stages)), "index": index, "docs_examined": es["totalDocsExamined"],
+            "keys_examined": es["totalKeysExamined"], "returned": es["nReturned"],
+            "millis": es["executionTimeMillis"]}
+
+
+# ---- Spark pipeline monitor ---------------------------------------------------------------------
+
+def spark_status(db):
+    return db.pipeline_status.find_one({"_id": "spark"})
+
+
+def pipeline_batches(db, limit=200):
+    rows = list(db.pipeline_batches.find().sort("processed_at", -1).limit(limit))
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df["processed_at"] = pd.to_datetime(df["processed_at"], utc=True)
+    return df.sort_values("processed_at").reset_index(drop=True)

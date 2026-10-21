@@ -7,6 +7,8 @@ import argparse
 import logging
 import os
 import sys
+import time
+from datetime import datetime, timezone
 
 from pymongo import ReplaceOne
 from pyspark.sql import SparkSession
@@ -49,7 +51,7 @@ def build_spark():
     os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [str(config.ROOT), os.environ.get("PYTHONPATH")]))
     return (SparkSession.builder.master("local[*]").appName("DisasterEarlyWarning")
             .config("spark.sql.shuffle.partitions", "2")
-            .config("spark.ui.enabled", "false")
+            .config("spark.ui.enabled", "true")
             .config("spark.sql.session.timeZone", "UTC")
             .getOrCreate())
 
@@ -63,6 +65,7 @@ def enriched_stream(spark, raw_dir):
 
 def make_writer(db_name):
     def write_batch(batch_df, batch_id):
+        t0 = time.time()
         rows = batch_df.collect()
         if not rows:
             return
@@ -71,8 +74,19 @@ def make_writer(db_name):
         ops = [ReplaceOne({"_id": r["id"]}, {k: v for k, v in to_document(r).items() if k != "_id"}, upsert=True)
                for r in rows]
         db.posts.bulk_write(ops, ordered=False)
-        log.info("batch %s: upserted %d enriched posts", batch_id, len(ops))
+        ms = int((time.time() - t0) * 1000)
+        db.pipeline_batches.insert_one({"batch_id": int(batch_id), "processed_at": datetime.now(timezone.utc),
+                                        "rows": len(ops), "duration_ms": ms})  # feeds the dashboard's Spark tab
+        log.info("batch %s: upserted %d enriched posts in %d ms", batch_id, len(ops), ms)
     return write_batch
+
+
+def publish_status(db, spark):
+    """Record where the Spark UI lives so the dashboard can link to it."""
+    sc = spark.sparkContext
+    db.pipeline_status.replace_one({"_id": "spark"}, {
+        "ui_url": sc.uiWebUrl, "app_id": sc.applicationId, "app_name": sc.appName, "master": sc.master,
+        "spark_version": spark.version, "started_at": datetime.now(timezone.utc)}, upsert=True)
 
 
 def main():
@@ -85,9 +99,10 @@ def main():
     a = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    ensure_indexes(get_db(a.db))
+    db = ensure_indexes(get_db(a.db))
     spark = build_spark()
     spark.sparkContext.setLogLevel("ERROR")
+    publish_status(db, spark)
     writer = (enriched_stream(spark, a.raw_dir).writeStream
               .foreachBatch(make_writer(a.db))
               .option("checkpointLocation", str(a.checkpoint)))

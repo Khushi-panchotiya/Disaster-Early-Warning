@@ -5,9 +5,11 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from common import config  # noqa: E402
@@ -100,4 +102,76 @@ def live():
                     f"sentiment {p['sentiment_score']:+.2f} — {p['text_snippet']} [source]({p['permalink']})")
 
 
-live()
+@st.fragment(run_every=refresh or None)
+def storage():
+    st.markdown("Everything the pipeline stores lives in **MongoDB** (`" + db_name + "`). "
+                "Spark writes enriched posts into `posts`; the detector writes `alerts`.")
+    st.subheader("Collections")
+    st.dataframe(data.collection_overview(db), hide_index=True, width="stretch")
+
+    st.subheader("Indexes on `posts`")
+    st.dataframe(data.index_table(db, "posts"), hide_index=True, width="stretch")
+    st.caption("`region_timestamp` is the compound index that serves 'mentions in region X over the last N minutes'.")
+
+    st.subheader("Browse documents")
+    c1, c2, c3 = st.columns(3)
+    region = c1.selectbox("Region", ["Any"] + sorted(REGIONS), key="browse_region")
+    keyword = c2.selectbox("Keyword", ["Any"] + list(KEYWORDS), key="browse_keyword")
+    limit = c3.slider("Rows", 5, 200, 25, key="browse_limit")
+    query, docs = data.browse_posts(db, None if region == "Any" else region, None if keyword == "Any" else keyword, limit)
+    st.code(f"db.posts.find({query or {}}).sort({{timestamp: -1}}).limit({limit})", language="javascript")
+    if docs:
+        df = pd.DataFrame(docs).rename(columns={"_id": "id"})
+        cols = ["timestamp", "region", "keyword_matched", "sentiment_score", "text_snippet", "permalink", "id"]
+        st.dataframe(df[[c for c in cols if c in df]], hide_index=True, width="stretch",
+                     column_config={"permalink": st.column_config.LinkColumn("permalink", display_text="open")})
+        with st.expander("Raw JSON of the newest document (exactly as stored)"):
+            st.json({k: str(v) if k == "timestamp" else v for k, v in docs[0].items()})
+        ex = data.explain_query(db, query)
+        st.markdown(f"**Query plan:** `{ex['stages']}` · index used: `{ex['index'] or 'none (full scan)'}` · "
+                    f"{ex['docs_examined']} docs examined for {ex['returned']} returned · {ex['millis']} ms")
+    else:
+        st.info("No documents match.")
+
+
+@st.fragment(run_every=refresh or None)
+def spark_tab():
+    status = data.spark_status(db)
+    st.markdown("**Apache Spark Structured Streaming** is the Big Data engine: it watches `raw_data/`, processes new "
+                "files in micro-batches (region tagging + VADER sentiment run in parallel), and upserts into MongoDB.")
+    if status:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Spark version", status["spark_version"])
+        c2.metric("Master", status["master"])
+        c3.metric("Application", status["app_id"])
+        st.link_button("Open Spark web UI (jobs, stages, streaming query)",
+                       f"http://localhost:{urlparse(status['ui_url']).port}")
+    else:
+        st.warning("The Spark job has not reported in yet. Start the pipeline with `make run`.")
+
+    b = data.pipeline_batches(db)
+    if b.empty:
+        st.info("No micro-batches processed yet. Inject data with `make baseline` or `make spike`.")
+        return
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Micro-batches", f"{len(b):,}")
+    c2.metric("Rows processed", f"{int(b.rows.sum()):,}")
+    c3.metric("Avg batch time", f"{b.duration_ms.mean():.0f} ms")
+    c4.metric("Throughput", f"{b.rows.sum() / max(b.duration_ms.sum() / 1000, 0.001):,.0f} rows/s",
+              help="rows written to MongoDB per second of batch time")
+    l, r = st.columns(2)
+    l.subheader("Rows per micro-batch")
+    l.bar_chart(b.set_index("processed_at")["rows"], y_label="rows", x_label="processed at (UTC)")
+    r.subheader("Batch duration")
+    r.line_chart(b.set_index("processed_at")["duration_ms"], y_label="ms", x_label="processed at (UTC)")
+    st.dataframe(b.tail(15).iloc[::-1][["batch_id", "processed_at", "rows", "duration_ms"]], hide_index=True,
+                 width="stretch")
+
+
+tab_live, tab_store, tab_spark = st.tabs(["📡 Live monitor", "🍃 MongoDB storage", "⚡ Spark pipeline"])
+with tab_live:
+    live()
+with tab_store:
+    storage()
+with tab_spark:
+    spark_tab()
