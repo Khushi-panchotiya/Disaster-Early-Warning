@@ -60,6 +60,31 @@ flowchart TD
 
 Only a short snippet (not the full post) and a link back to the source are stored — enough to show real evidence on the dashboard without hoarding full post bodies.
 
+## Course Requirement Mapping
+
+| Requirement | How this project meets it |
+|---|---|
+| **MongoDB (compulsory)** | Single storage layer for enriched posts and alerts. Compound index `{region, timestamp}`, time-window aggregations with `$dateTrunc`/`$group`, idempotent upserts, verified with `explain()`. |
+| **One Big Data tool** | **Apache Spark Structured Streaming**: file-source micro-batches, UDF enrichment, checkpointing, and an idempotent `foreachBatch` sink into MongoDB. |
+| **Big Data characteristics** | **Velocity**: continuous streaming pipeline with alerts within seconds. **Volume/variety**: the design scales out (Spark cluster via one config line, MongoDB sharding on `region`), but a large-scale benchmark has not been run yet (see Pending). |
+
+## Project Status (final version for submission)
+
+**Done**
+- [x] Ingestion script (Reddit via PRAW) with dedupe, atomic batches, rate-limit/error handling
+- [x] Data simulator for repeatable demos and testing
+- [x] Spark Structured Streaming job: region tagging, VADER sentiment, snippets, MongoDB upserts
+- [x] MongoDB schema and compound indexes
+- [x] Sliding-window spike detector with alert lifecycle
+- [x] Streamlit dashboard (alert feed, timeline, map, evidence snippets)
+- [x] 38 automated tests, including an end-to-end Spark -> MongoDB -> detector test
+
+**Pending (future work, not part of this submission)**
+- [ ] Live run against Reddit (waiting for Reddit API access approval; code is ready, run `USE_REDDIT=1 make run` once `.env` is filled in)
+- [ ] Volume benchmark: millions of generated records, ingest throughput, query time with vs. without the index
+- [ ] Spark batch analytics job over the full MongoDB history (per-region daily trends, keyword co-occurrence)
+- [ ] Additional data sources for variety (USGS earthquake feed, news RSS)
+
 ## Quick Start
 
 Requirements: macOS/Linux, Python 3.11, Java 11+, MongoDB Community running locally.
