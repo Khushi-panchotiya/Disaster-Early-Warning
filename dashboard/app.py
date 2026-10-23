@@ -63,9 +63,9 @@ def live():
               help="VADER compound score: -1 very negative/urgent, +1 very positive")
 
     st.subheader("Alert feed")
-    alerts = data.recent_alerts(db, 10)
+    alerts = data.recent_alerts(db, 10, hours)
     if not alerts:
-        st.success("No alerts so far. Mention volume looks normal.")
+        st.success("No alerts in this look-back window. Mention volume looks normal.")
     for a in alerts:
         box = st.error if a["severity"] == "critical" else st.warning
         box(f"**{a['severity'].upper()} · {a['region']}** — {a['count']} '{a['top_keyword']}' mentions in "

@@ -19,8 +19,9 @@ def _filter(since, regions=None, keywords=None):
     return q
 
 
-def recent_alerts(db, limit=20):
-    return list(db.alerts.find().sort("updated_at", -1).limit(limit))
+def recent_alerts(db, limit=20, hours=None):
+    q = {"updated_at": {"$gte": _since(hours)}} if hours else {}
+    return list(db.alerts.find(q).sort("updated_at", -1).limit(limit))
 
 
 def active_alert_count(db, minutes=15, now=None):
