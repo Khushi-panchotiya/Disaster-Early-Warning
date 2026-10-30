@@ -26,8 +26,7 @@ def db_handle(name):
     return ensure_indexes(get_db(name))
 
 
-st.title("🚨 Disaster Early-Warning System")
-st.caption("Reddit chatter → Spark Structured Streaming → MongoDB → spike detector")
+st.title("Disaster Early-Warning System")
 
 with st.sidebar:
     st.header("Controls")
@@ -168,7 +167,7 @@ def spark_tab():
                  width="stretch")
 
 
-tab_live, tab_store, tab_spark = st.tabs(["📡 Live monitor", "🍃 MongoDB storage", "⚡ Spark pipeline"])
+tab_live, tab_store, tab_spark = st.tabs(["Live monitor", "MongoDB storage", " "])
 with tab_live:
     live()
 with tab_store:
